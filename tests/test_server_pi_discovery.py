@@ -70,6 +70,7 @@ class TestServerPiDiscovery(unittest.TestCase):
         self.assertTrue(row["busy"])
         self.assertEqual(row["thread_id"], "pi-session")
         self.assertEqual(row["log_path"], str(log_path))
+        self.assertEqual(row["backend"], "pty")
         self.assertEqual(row["session_file"], str(log_path))
         self.assertEqual(row["resume_hint"], f"pi --session {log_path}")
 
@@ -101,6 +102,7 @@ class TestServerPiDiscovery(unittest.TestCase):
         self.assertEqual(row["cli"], "pi")
         self.assertEqual(row["thread_id"], "native-pi")
         self.assertEqual(row["log_path"], str(session_file.resolve()))
+        self.assertEqual(row["backend"], "native")
         self.assertEqual(row["session_file"], str(session_file.resolve()))
         self.assertEqual(row["resume_hint"], f"pi --session {session_file.resolve()}")
         self.assertTrue(row["busy"])

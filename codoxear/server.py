@@ -2650,6 +2650,7 @@ class SessionManager:
                         "harness_enabled": h_enabled,
                         "alias": alias,
                         "files": list(files),
+                        "backend": getattr(s, "backend", "pty"),
                         "session_file": s.session_file,
                         "resume_hint": s.resume_hint,
                         "tmux_name": s.tmux_name if isinstance(getattr(s, "tmux_name", None), str) else None,

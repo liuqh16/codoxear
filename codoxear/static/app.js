@@ -357,6 +357,14 @@
         return normalizeCliName(session && session.cli, "codex");
       }
 
+      function sessionBackend(session) {
+        return session && typeof session.backend === "string" ? session.backend : "pty";
+      }
+
+      function isReadOnlySession(session) {
+        return sessionCliName(session) === "pi" && sessionBackend(session) === "native";
+      }
+
       function resumeCommandForSession(sid, session) {
         const cli = sessionCliName(session);
         if (cli === "gemini") return `gemini --resume ${sid}`;
@@ -2084,6 +2092,19 @@
           const mobile = isMobile();
           currentRunning = Boolean(running);
           if (selected) setSelectedQueueLen(q);
+          const selectedSession = selected ? sessionIndex.get(selected) : null;
+          const readOnly = isReadOnlySession(selectedSession);
+          if (queueBtn) {
+            queueBtn.disabled = !selected || readOnly;
+            queueBtn.title = readOnly ? "Queue unavailable for native Pi sessions" : "Queued messages";
+          }
+          if (selected) {
+            const sendBtnEl = $("#sendBtn");
+            if (sendBtnEl && !sending) {
+              sendBtnEl.disabled = readOnly;
+              sendBtnEl.title = readOnly ? "Send unavailable for native Pi sessions" : "Send";
+            }
+          }
           if (running) {
             statusChip.style.display = "none";
             statusChip.classList.remove("running");
@@ -2092,8 +2113,9 @@
 			            if (q) statusChip.textContent = mobile ? `Q ${q}` : `Queue ${q}`;
 			            else statusChip.textContent = "Idle";
           }
-          interruptBtn.style.display = running && selected ? "inline-flex" : "none";
-          interruptBtn.disabled = !(running && selected);
+          interruptBtn.style.display = running && selected && !readOnly ? "inline-flex" : "none";
+          interruptBtn.disabled = !(running && selected && !readOnly);
+          interruptBtn.title = readOnly ? "Interrupt unavailable for native Pi sessions" : "Interrupt";
           updateQueueBadge();
         }
 
@@ -2733,6 +2755,11 @@
           const sid = sidOverride || selected;
           if (!sid) {
             setToast("select a session first");
+            return false;
+          }
+          const s = sessionIndex.get(sid);
+          if (isReadOnlySession(s)) {
+            setToast("native Pi sessions are read-only in WebUI");
             return false;
           }
           const outgoing = normalizeOutgoingTextForCli(raw, sid);
@@ -3407,6 +3434,7 @@
           const badges = [];
           badges.push(badge);
           if (q) badges.push(q);
+          if (isReadOnlySession(s)) badges.push(el("span", { class: "badge", text: "read-only" }));
           if (isSessionUnread(s)) badges.push(el("span", { class: "unreadDot", title: "Unread response" }));
           let delBtn = null;
           const renameCardBtn = el("button", {
@@ -4050,8 +4078,24 @@
           duplicateBtn.disabled = !selected;
           sessionToolsBtn.disabled = !selected;
 
-          // Update tmux attach button state
           const s = selected ? sessionIndex.get(selected) : null;
+          const readOnly = isReadOnlySession(s);
+          const sendBtnEl = $("#sendBtn");
+          if (sendBtnEl && !sending) {
+            sendBtnEl.disabled = !selected || readOnly;
+            sendBtnEl.title = readOnly ? "Send unavailable for native Pi sessions" : "Send";
+          }
+          if (queueBtn) {
+            queueBtn.disabled = !selected || readOnly;
+            queueBtn.title = readOnly ? "Queue unavailable for native Pi sessions" : "Queued messages";
+          }
+          if (readOnly) {
+            interruptBtn.style.display = "none";
+            interruptBtn.disabled = true;
+            interruptBtn.title = "Interrupt unavailable for native Pi sessions";
+          }
+
+          // Update tmux attach button state
           const tmuxName = s && typeof s.tmux_name === "string" ? s.tmux_name.trim() : "";
           tmuxAttachBtn.disabled = !tmuxName;
           if (tmuxName) {
@@ -5259,6 +5303,11 @@
         async function sendText(raw) {
           if (!selected) return;
           const sid = selected;
+          const s = sessionIndex.get(sid);
+          if (isReadOnlySession(s)) {
+            setToast("native Pi sessions are read-only in WebUI");
+            return;
+          }
           const outgoing = normalizeOutgoingTextForCli(raw, sid);
           if (!outgoing || !outgoing.trim()) return;
           if (sending) return;
