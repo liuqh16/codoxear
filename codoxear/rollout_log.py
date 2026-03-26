@@ -18,6 +18,7 @@ from .cli_support import is_gemini_chat_log_path as _is_gemini_chat_log_path
 from .cli_support import pi_assistant_text as _pi_assistant_text
 from .cli_support import pi_assistant_thinking_count as _pi_assistant_thinking_count
 from .cli_support import pi_assistant_tool_use_count as _pi_assistant_tool_use_count
+from .cli_support import pi_assistant_content_parts as _pi_assistant_content_parts
 from .cli_support import pi_user_text as _pi_user_text
 from .cli_support import read_gemini_rollout_objs as _read_gemini_rollout_objs
 
@@ -386,6 +387,25 @@ def _read_chat_events_from_tail(
     return events
 
 
+def _pi_message_role(obj: dict[str, Any]) -> str | None:
+    if obj.get("type") != "message":
+        return None
+    msg = obj.get("message")
+    if not isinstance(msg, dict):
+        return None
+    role = msg.get("role")
+    return role if isinstance(role, str) and role else None
+
+
+def _pi_message_keeps_turn_busy(obj: dict[str, Any]) -> bool:
+    role = _pi_message_role(obj)
+    if role == "toolResult":
+        return True
+    if role != "assistant":
+        return False
+    return (_pi_assistant_thinking_count(obj) > 0) or (_pi_assistant_tool_use_count(obj) > 0)
+
+
 def _has_assistant_output_text(obj: dict[str, Any]) -> bool:
     typ = obj.get("type")
     if typ == "assistant":
@@ -433,7 +453,7 @@ def _analyze_log_chunk(
                 continue
             d_th += _pi_assistant_thinking_count(obj)
             d_tools += _pi_assistant_tool_use_count(obj)
-            if _has_assistant_output_text(obj):
+            if _has_assistant_output_text(obj) or _pi_message_keeps_turn_busy(obj):
                 last_chat_ts = _event_ts(obj)
                 last_assistant_ts = _event_ts(obj)
             continue
@@ -518,7 +538,7 @@ def _last_conversation_ts_from_tail(
                 last_ts = event_ts(obj)
                 continue
             if typ == "message":
-                if _pi_user_text(obj) or _has_assistant_output_text(obj):
+                if _pi_user_text(obj) or _has_assistant_output_text(obj) or _pi_message_keeps_turn_busy(obj):
                     last_idx = i
                     last_ts = event_ts(obj)
                 continue
@@ -566,6 +586,11 @@ def _last_assistant_ts_from_tail(
         for obj in objs:
             typ = obj.get("type")
             if typ == "assistant" and _has_assistant_output_text(obj):
+                ts = _event_ts(obj)
+                if ts is not None:
+                    last_assistant = float(ts)
+                continue
+            if typ == "message" and (_has_assistant_output_text(obj) or _pi_message_keeps_turn_busy(obj)):
                 ts = _event_ts(obj)
                 if ts is not None:
                     last_assistant = float(ts)
@@ -667,13 +692,16 @@ def _compute_idle_from_log(path: Path, max_scan_bytes: int = 8 * 1024 * 1024) ->
                 has_text = _has_assistant_output_text(obj)
                 has_thinking = _pi_assistant_thinking_count(obj) > 0
                 has_tools = _pi_assistant_tool_use_count(obj) > 0
+                is_tool_result = _pi_message_role(obj) == "toolResult"
                 if has_text:
                     last_terminal_event = "assistant"
                     turn_open = False
                     turn_has_completion_candidate = False
                     continue
-                if turn_open and (has_thinking or has_tools):
+                if has_thinking or has_tools or is_tool_result:
+                    turn_open = True
                     turn_has_completion_candidate = False
+                    last_terminal_event = "assistant_busy"
                 continue
             if typ == "system":
                 is_claude_format = True  # Claude uses "system" type
@@ -826,7 +854,7 @@ def _last_chat_role_ts_from_tail(
                 if _pi_user_text(obj):
                     last_user = (i, event_ts(obj))
                     continue
-                if _has_assistant_output_text(obj):
+                if _has_assistant_output_text(obj) or _pi_message_keeps_turn_busy(obj):
                     last_assistant = (i, event_ts(obj))
                 continue
             if typ == "event_msg":

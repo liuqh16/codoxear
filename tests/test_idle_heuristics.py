@@ -312,6 +312,63 @@ class TestIdleHeuristics(unittest.TestCase):
             with patch.dict(os.environ, {"PI_HOME": str(pi_home)}, clear=False):
                 self.assertIs(_compute_idle_from_log(p, max_scan_bytes=64 * 1024), True)
 
+    def test_pi_assistant_tool_call_keeps_busy(self) -> None:
+        with TemporaryDirectory() as td:
+            pi_home = Path(td) / ".pi"
+            p = pi_home / "agent" / "sessions" / "--proj--" / "2026-03-07_demo.jsonl"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            _write_jsonl(
+                p,
+                [
+                    {"type": "session", "version": 3, "id": "s", "cwd": "/proj"},
+                    {"type": "message", "message": {"role": "user", "content": "hi"}},
+                    {
+                        "type": "message",
+                        "timestamp": "2026-03-07T00:00:02.000Z",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "thinking", "thinking": "working"},
+                                {"type": "toolCall", "name": "read", "arguments": {"path": "x"}},
+                            ],
+                        },
+                    },
+                ],
+            )
+            with patch.dict(os.environ, {"PI_HOME": str(pi_home)}, clear=False):
+                self.assertIs(_compute_idle_from_log(p, max_scan_bytes=64 * 1024), False)
+
+    def test_pi_tool_result_keeps_busy(self) -> None:
+        with TemporaryDirectory() as td:
+            pi_home = Path(td) / ".pi"
+            p = pi_home / "agent" / "sessions" / "--proj--" / "2026-03-07_demo.jsonl"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            _write_jsonl(
+                p,
+                [
+                    {"type": "session", "version": 3, "id": "s", "cwd": "/proj"},
+                    {"type": "message", "message": {"role": "user", "content": "hi"}},
+                    {
+                        "type": "message",
+                        "timestamp": "2026-03-07T00:00:02.000Z",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "thinking", "thinking": "working"},
+                                {"type": "toolCall", "name": "read", "arguments": {"path": "x"}},
+                            ],
+                        },
+                    },
+                    {
+                        "type": "message",
+                        "timestamp": "2026-03-07T00:00:03.000Z",
+                        "message": {"role": "toolResult", "content": [{"type": "text", "text": "ok"}]},
+                    },
+                ],
+            )
+            with patch.dict(os.environ, {"PI_HOME": str(pi_home)}, clear=False):
+                self.assertIs(_compute_idle_from_log(p, max_scan_bytes=64 * 1024), False)
+
 
 if __name__ == "__main__":
     unittest.main()
