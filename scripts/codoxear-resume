@@ -101,17 +101,23 @@ for meta_path in sorted(sock_dir.glob("*.json")):
     start_ts = meta.get("start_ts")
     ts = float(start_ts) if isinstance(start_ts, (int, float)) else 0.0
     start = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts > 0 else "?"
-    items.append((sid, owner, cli, cwd, start, ts))
+    session_file = meta.get("session_file") if isinstance(meta.get("session_file"), str) else ""
+    resume_hint = meta.get("resume_hint") if isinstance(meta.get("resume_hint"), str) else ""
+    log_path = meta.get("log_path") if isinstance(meta.get("log_path"), str) else ""
+    items.append((sid, owner, cli, cwd, start, ts, session_file, resume_hint, log_path))
 
 items.sort(key=lambda x: x[5], reverse=True)
-for i, (sid, owner, cli, cwd, start, ts) in enumerate(items, 1):
-    print(f"{i}\t{sid}\t{owner}\t{cli}\t{cwd}\t{start}\t{ts}")
+for i, (sid, owner, cli, cwd, start, ts, session_file, resume_hint, log_path) in enumerate(items, 1):
+    print(f"{i}\t{sid}\t{owner}\t{cli}\t{cwd}\t{start}\t{ts}\t{session_file}\t{resume_hint}\t{log_path}")
 PY
 }
 
 resume_session() {
   local cli="$1"
   local sid="$2"
+  local session_file="${3:-}"
+  local resume_hint="${4:-}"
+  local log_path="${5:-}"
   if [[ "$cli" == "gemini" ]]; then
     if ! command -v gemini >/dev/null 2>&1; then
       echo "error: gemini CLI not found in PATH" >&2
@@ -123,6 +129,15 @@ resume_session() {
     if ! command -v pi >/dev/null 2>&1; then
       echo "error: pi CLI not found in PATH" >&2
       exit 1
+    fi
+    if [[ -n "$session_file" ]]; then
+      exec pi --session "$session_file"
+    fi
+    if [[ -n "$log_path" ]]; then
+      exec pi --session "$log_path"
+    fi
+    if [[ -n "$resume_hint" ]]; then
+      exec bash -lc "$resume_hint"
     fi
     exec pi --session "$sid"
   fi
@@ -156,11 +171,14 @@ if [[ "$mode" == "last" ]]; then
   first="$(printf "%s\n" "$lines" | head -n 1)"
   sid="$(printf "%s\n" "$first" | awk -F'\t' '{print $2}')"
   cli="$(printf "%s\n" "$first" | awk -F'\t' '{print $4}')"
+  session_file="$(printf "%s\n" "$first" | awk -F'\t' '{print $8}')"
+  resume_hint="$(printf "%s\n" "$first" | awk -F'\t' '{print $9}')"
+  log_path="$(printf "%s\n" "$first" | awk -F'\t' '{print $10}')"
   if [[ -z "$sid" ]]; then
     echo "error: unable to determine latest session" >&2
     exit 1
   fi
-  resume_session "$cli" "$sid"
+  resume_session "$cli" "$sid" "$session_file" "$resume_hint" "$log_path"
 fi
 
 if [[ "$mode" == "id" ]]; then
@@ -180,11 +198,14 @@ if [[ "$mode" == "id" ]]; then
   fi
   sid="$(printf "%s\n" "$row" | awk -F'\t' '{print $2}')"
   cli="$(printf "%s\n" "$row" | awk -F'\t' '{print $4}')"
+  session_file="$(printf "%s\n" "$row" | awk -F'\t' '{print $8}')"
+  resume_hint="$(printf "%s\n" "$row" | awk -F'\t' '{print $9}')"
+  log_path="$(printf "%s\n" "$row" | awk -F'\t' '{print $10}')"
   if [[ -z "$sid" ]]; then
     echo "error: no session matching $target_id" >&2
     exit 1
   fi
-  resume_session "$cli" "$sid"
+  resume_session "$cli" "$sid" "$session_file" "$resume_hint" "$log_path"
 fi
 
 printf "Idx  Session ID                           Owner     CLI      CWD                           Started\n"
@@ -201,9 +222,12 @@ fi
 
 sid="$(printf "%s\n" "$lines" | awk -F'\t' -v n="$choice" '$1==n {print $2; exit}')"
 cli="$(printf "%s\n" "$lines" | awk -F'\t' -v n="$choice" '$1==n {print $4; exit}')"
+session_file="$(printf "%s\n" "$lines" | awk -F'\t' -v n="$choice" '$1==n {print $8; exit}')"
+resume_hint="$(printf "%s\n" "$lines" | awk -F'\t' -v n="$choice" '$1==n {print $9; exit}')"
+log_path="$(printf "%s\n" "$lines" | awk -F'\t' -v n="$choice" '$1==n {print $10; exit}')"
 if [[ -z "$sid" ]]; then
   echo "error: no session for selection $choice" >&2
   exit 1
 fi
 
-resume_session "$cli" "$sid"
+resume_session "$cli" "$sid" "$session_file" "$resume_hint" "$log_path"

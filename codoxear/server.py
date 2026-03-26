@@ -1626,6 +1626,8 @@ class Session:
     cwd: str
     log_path: Path | None
     sock_path: Path
+    session_file: str | None = None
+    resume_hint: str | None = None
     tmux_name: str | None = None
     busy: bool = False
     queue_len: int = 0
@@ -2186,6 +2188,10 @@ class SessionManager:
             cli = _normalize_cli_name(cli_raw, default=DEFAULT_SPAWN_CLI)
             tmux_raw = meta.get("tmux_name")
             tmux_name = tmux_raw.strip() if isinstance(tmux_raw, str) and tmux_raw.strip() else None
+            session_file_raw = meta.get("session_file") if isinstance(meta.get("session_file"), str) else ""
+            session_file = session_file_raw.strip() or None
+            resume_hint_raw = meta.get("resume_hint") if isinstance(meta.get("resume_hint"), str) else ""
+            resume_hint = resume_hint_raw.strip() or None
 
             log_path: Path | None = None
             if "log_path" not in meta:
@@ -2206,6 +2212,11 @@ class SessionManager:
                     thread_id, log_path = _coerce_main_thread_log(thread_id=thread_id, log_path=log_path)
             else:
                 log_path = None
+            if cli == "pi" and log_path is not None:
+                if session_file is None:
+                    session_file = str(log_path)
+                if resume_hint is None:
+                    resume_hint = f"pi --session {log_path}"
 
             if (log_path is None) and (not _pid_alive(codex_pid)) and (not _pid_alive(broker_pid)):
                 _unlink_quiet(sock)
@@ -2261,6 +2272,8 @@ class SessionManager:
                 cwd=str(cwd),
                 log_path=log_path,
                 sock_path=sock,
+                session_file=session_file,
+                resume_hint=resume_hint,
                 tmux_name=tmux_name,
                 busy=bool(resp.get("busy")),
                 queue_len=int(resp.get("queue_len")),
@@ -2288,6 +2301,8 @@ class SessionManager:
                     prev.busy = s.busy
                     prev.queue_len = s.queue_len
                     prev.token = s.token
+                    prev.session_file = s.session_file
+                    prev.resume_hint = s.resume_hint
                     prev.tmux_name = s.tmux_name
                     if prev.log_path != s.log_path:
                         prev.log_path = s.log_path
@@ -2462,6 +2477,8 @@ class SessionManager:
                         "harness_enabled": h_enabled,
                         "alias": alias,
                         "files": list(files),
+                        "session_file": s.session_file,
+                        "resume_hint": s.resume_hint,
                         "tmux_name": s.tmux_name if isinstance(getattr(s, "tmux_name", None), str) else None,
                     }
                 )

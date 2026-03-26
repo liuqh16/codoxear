@@ -69,6 +69,8 @@ class TestServerPiDiscovery(unittest.TestCase):
         self.assertTrue(row["busy"])
         self.assertEqual(row["thread_id"], "pi-session")
         self.assertEqual(row["log_path"], str(log_path))
+        self.assertEqual(row["session_file"], str(log_path))
+        self.assertEqual(row["resume_hint"], f"pi --session {log_path}")
 
 
 if __name__ == "__main__":

@@ -1269,6 +1269,7 @@ class Broker:
         st = self.state
         if not st or not st.sock_path:
             return
+        session_file = str(st.log_path) if (CLI_KIND == "pi" and st.log_path) else None
         meta = {
             "session_id": st.session_id,
             "owner": OWNER_TAG if OWNER_TAG else None,
@@ -1280,6 +1281,8 @@ class Broker:
             "start_ts": st.start_ts,
             "log_path": str(st.log_path) if st.log_path else None,
             "sock_path": str(st.sock_path),
+            "session_file": session_file,
+            "resume_hint": (f"pi --session {session_file}" if session_file else None),
             "tmux_name": TMUX_NAME if TMUX_NAME else None,
         }
         meta_path = st.sock_path.with_suffix(".json")

@@ -360,7 +360,12 @@
       function resumeCommandForSession(sid, session) {
         const cli = sessionCliName(session);
         if (cli === "gemini") return `gemini --resume ${sid}`;
-        if (cli === "pi") return `pi --session ${sid}`;
+        if (cli === "pi") {
+          const sessionFile = typeof session?.session_file === "string" ? session.session_file.trim() : "";
+          const logPath = typeof session?.log_path === "string" ? session.log_path.trim() : "";
+          const target = sessionFile || logPath || sid;
+          return `pi --session ${target}`;
+        }
         if (cli === "claude") return `claude --resume ${sid}`;
         return `codex resume ${sid}`;
       }
