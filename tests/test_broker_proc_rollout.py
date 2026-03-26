@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from codoxear.broker import _find_recent_claude_project_log
 from codoxear.broker import _find_recent_gemini_chat_log
+from codoxear.broker import _find_recent_pi_session_log
 from codoxear.util import proc_find_open_rollout_log, proc_open_rollout_logs
 
 
@@ -273,6 +274,30 @@ class TestBrokerProcRolloutDiscovery(unittest.TestCase):
             os.utime(want, (1020.0, 1020.0))
 
             found = _find_recent_gemini_chat_log(sessions_dir=tmp, cwd="/want", after_ts=1010.0)
+            self.assertEqual(found, want)
+
+    def test_broker_fallback_finds_recent_pi_log(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            sessions = root / "agent" / "sessions"
+            stale_dir = sessions / "--stale--"
+            wrong_dir = sessions / "--wrong--"
+            want_dir = sessions / "--want--"
+            for d in (stale_dir, wrong_dir, want_dir):
+                d.mkdir(parents=True, exist_ok=True)
+
+            stale = stale_dir / "2026-03-02_stale.jsonl"
+            wrong = wrong_dir / "2026-03-02_wrong.jsonl"
+            want = want_dir / "2026-03-02_want.jsonl"
+            _write_jsonl(stale, [{"type": "session", "version": 3, "id": "stale", "cwd": "/want"}])
+            _write_jsonl(wrong, [{"type": "session", "version": 3, "id": "wrong", "cwd": "/other"}])
+            _write_jsonl(want, [{"type": "session", "version": 3, "id": "want", "cwd": "/want"}])
+
+            os.utime(stale, (1000.0, 1000.0))
+            os.utime(wrong, (1015.0, 1015.0))
+            os.utime(want, (1020.0, 1020.0))
+
+            found = _find_recent_pi_session_log(sessions_dir=sessions, cwd="/want", after_ts=1010.0)
             self.assertEqual(found, want)
 
 

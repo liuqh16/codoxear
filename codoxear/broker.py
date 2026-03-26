@@ -1030,6 +1030,21 @@ class Broker:
                             self._maybe_register_or_switch_rollout(log_path=fallback)
                             time.sleep(0.25)
                             continue
+                    if CLI_KIND == "pi":
+                        claimed_paths = _claimed_rollout_paths_from_sock_meta(
+                            sock_dir=SOCK_DIR,
+                            exclude_sock=sock_path,
+                        )
+                        fallback = _find_recent_pi_session_log(
+                            sessions_dir=self.sessions_dir,
+                            cwd=self.cwd,
+                            after_ts=start_ts,
+                            exclude_paths=claimed_paths,
+                        )
+                        if fallback and fallback.exists():
+                            self._maybe_register_or_switch_rollout(log_path=fallback)
+                            time.sleep(0.25)
+                            continue
                     # Exit early if Codex is gone.
                     try:
                         wpid, _status = os.waitpid(root_pid, os.WNOHANG)
