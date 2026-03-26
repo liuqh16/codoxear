@@ -13,8 +13,10 @@ from .cli_support import cli_logs_dir as _cli_logs_dir
 from .cli_support import is_claude_project_log_path as _is_claude_project_log_path
 from .cli_support import is_codex_rollout_log_path as _is_codex_rollout_log_path
 from .cli_support import is_gemini_chat_log_path as _is_gemini_chat_log_path
+from .cli_support import is_pi_session_log_path as _is_pi_session_log_path
 from .cli_support import read_claude_log_cwd as _read_claude_log_cwd
 from .cli_support import read_gemini_log_cwd as _read_gemini_log_cwd
+from .cli_support import read_pi_log_cwd as _read_pi_log_cwd
 from .cli_support import read_gemini_rollout_objs as _read_gemini_rollout_objs
 from .cli_support import session_id_from_log_path as _session_id_from_log_path
 
@@ -134,6 +136,7 @@ def iter_session_logs(sessions_dir: Path) -> list[Path]:
     out: list[tuple[float, Path]] = []
     claude_projects_dir = _cli_logs_dir("claude")
     gemini_tmp_dir = _cli_logs_dir("gemini")
+    pi_sessions_dir = _cli_logs_dir("pi")
     for p in sessions_dir.rglob("*"):
         if not p.is_file():
             continue
@@ -141,6 +144,7 @@ def iter_session_logs(sessions_dir: Path) -> list[Path]:
             _is_codex_rollout_log_path(p)
             or _is_claude_project_log_path(p, claude_projects_dir=claude_projects_dir)
             or _is_gemini_chat_log_path(p, gemini_tmp_dir=gemini_tmp_dir)
+            or _is_pi_session_log_path(p, pi_sessions_dir=pi_sessions_dir)
         ):
             continue
         try:
@@ -204,6 +208,14 @@ def find_new_session_log(
                     sid3 = _session_id_from_log_path(p, cli="gemini")
                     if isinstance(sid3, str) and sid3:
                         return sid3, p
+                if _is_pi_session_log_path(p, pi_sessions_dir=_cli_logs_dir("pi")):
+                    if cwd is not None:
+                        pcwd4 = _read_pi_log_cwd(p)
+                        if not (isinstance(pcwd4, str) and pcwd4 == cwd):
+                            continue
+                    sid4 = _session_id_from_log_path(p, cli="pi")
+                    if isinstance(sid4, str) and sid4:
+                        return sid4, p
                 continue
             if is_subagent_session_meta(payload):
                 continue
@@ -321,6 +333,7 @@ def proc_open_rollout_logs(proc_root: Path, root_pid: int) -> set[Path]:
     uid = int(os.getuid())
     claude_projects_dir = _cli_logs_dir("claude")
     gemini_tmp_dir = _cli_logs_dir("gemini")
+    pi_sessions_dir = _cli_logs_dir("pi")
     out: set[Path] = set()
     for pid in _proc_descendants(proc_root, root_pid):
         puid = _proc_pid_uid(proc_root, pid)
@@ -350,6 +363,9 @@ def proc_open_rollout_logs(proc_root: Path, root_pid: int) -> set[Path]:
                 out.add(p)
                 continue
             if _is_gemini_chat_log_path(p, gemini_tmp_dir=gemini_tmp_dir):
+                out.add(p)
+                continue
+            if _is_pi_session_log_path(p, pi_sessions_dir=pi_sessions_dir):
                 out.add(p)
                 continue
     return out
@@ -386,6 +402,12 @@ def proc_find_open_rollout_log(
         if _is_gemini_chat_log_path(p, gemini_tmp_dir=_cli_logs_dir("gemini")):
             if cwd is not None:
                 pcwd = _read_gemini_log_cwd(p)
+                if not (isinstance(pcwd, str) and pcwd == cwd):
+                    continue
+            return p
+        if _is_pi_session_log_path(p, pi_sessions_dir=_cli_logs_dir("pi")):
+            if cwd is not None:
+                pcwd = _read_pi_log_cwd(p)
                 if not (isinstance(pcwd, str) and pcwd == cwd):
                     continue
             return p

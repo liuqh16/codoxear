@@ -129,6 +129,40 @@ class TestServerChatFlags(unittest.TestCase):
         self.assertFalse(flags["turn_end"])
         self.assertFalse(flags["turn_aborted"])
 
+    def test_pi_message_sets_turn_end(self) -> None:
+        events, meta, flags, _diag = _extract_chat_events(
+            [
+                {"type": "message", "message": {"role": "user", "content": "hello"}},
+                {"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]}}
+            ]
+        )
+        self.assertEqual([e["role"] for e in events], ["user", "assistant"])
+        self.assertTrue(flags["turn_start"])
+        self.assertTrue(flags["turn_end"])
+        self.assertEqual(meta["thinking"], 0)
+
+    def test_pi_thinking_and_tool_count_meta(self) -> None:
+        _events, meta, flags, diag = _extract_chat_events(
+            [
+                {"type": "message", "message": {"role": "user", "content": "hello"}},
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "hmm"},
+                            {"type": "toolCall", "id": "t1", "name": "bash", "arguments": {}},
+                        ],
+                    },
+                },
+            ]
+        )
+        self.assertEqual(meta["thinking"], 1)
+        self.assertEqual(meta["tool"], 1)
+        self.assertTrue(flags["turn_start"])
+        self.assertFalse(flags["turn_end"])
+        self.assertIn("pi_tool", diag["tool_names"])
+
 
 if __name__ == "__main__":
     unittest.main()

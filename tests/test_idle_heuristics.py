@@ -281,6 +281,37 @@ class TestIdleHeuristics(unittest.TestCase):
             with patch.dict(os.environ, {"GEMINI_HOME": str(gem_home)}, clear=False):
                 self.assertIs(_compute_idle_from_log(p, max_scan_bytes=64 * 1024), False)
 
+    def test_pi_user_message_is_busy(self) -> None:
+        with TemporaryDirectory() as td:
+            pi_home = Path(td) / ".pi"
+            p = pi_home / "agent" / "sessions" / "--proj--" / "2026-03-07_demo.jsonl"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            _write_jsonl(
+                p,
+                [
+                    {"type": "session", "version": 3, "id": "s", "cwd": "/proj"},
+                    {"type": "message", "message": {"role": "user", "content": "hi"}},
+                ],
+            )
+            with patch.dict(os.environ, {"PI_HOME": str(pi_home)}, clear=False):
+                self.assertIs(_compute_idle_from_log(p, max_scan_bytes=64 * 1024), False)
+
+    def test_pi_assistant_message_is_idle(self) -> None:
+        with TemporaryDirectory() as td:
+            pi_home = Path(td) / ".pi"
+            p = pi_home / "agent" / "sessions" / "--proj--" / "2026-03-07_demo.jsonl"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            _write_jsonl(
+                p,
+                [
+                    {"type": "session", "version": 3, "id": "s", "cwd": "/proj"},
+                    {"type": "message", "message": {"role": "user", "content": "hi"}},
+                    {"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]}},
+                ],
+            )
+            with patch.dict(os.environ, {"PI_HOME": str(pi_home)}, clear=False):
+                self.assertIs(_compute_idle_from_log(p, max_scan_bytes=64 * 1024), True)
+
 
 if __name__ == "__main__":
     unittest.main()

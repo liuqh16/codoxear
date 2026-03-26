@@ -15,6 +15,10 @@ from .cli_support import claude_assistant_tool_use_count as _claude_assistant_to
 from .cli_support import claude_user_text as _claude_user_text
 from .cli_support import is_codex_rollout_log_path as _is_codex_rollout_log_path
 from .cli_support import is_gemini_chat_log_path as _is_gemini_chat_log_path
+from .cli_support import pi_assistant_text as _pi_assistant_text
+from .cli_support import pi_assistant_thinking_count as _pi_assistant_thinking_count
+from .cli_support import pi_assistant_tool_use_count as _pi_assistant_tool_use_count
+from .cli_support import pi_user_text as _pi_user_text
 from .cli_support import read_gemini_rollout_objs as _read_gemini_rollout_objs
 
 
@@ -224,6 +228,34 @@ def _extract_chat_events(
                         last_tool = name
             continue
 
+        if typ == "message":
+            user_text = _pi_user_text(obj)
+            if isinstance(user_text, str) and user_text:
+                turn_start = True
+                ets = event_ts(obj)
+                evp = {"role": "user", "text": user_text}
+                if ets is not None:
+                    evp["ts"] = ets
+                events.append(evp)
+                continue
+            assistant_text = _pi_assistant_text(obj)
+            if isinstance(assistant_text, str) and assistant_text:
+                turn_end = True
+                ets = event_ts(obj)
+                eva = {"role": "assistant", "text": assistant_text}
+                if ets is not None:
+                    eva["ts"] = ets
+                events.append(eva)
+            thinking_count = _pi_assistant_thinking_count(obj)
+            if thinking_count > 0:
+                total_thinking += thinking_count
+            tool_count = _pi_assistant_tool_use_count(obj)
+            if tool_count > 0:
+                total_tools += tool_count
+                tool_names.add("pi_tool")
+                last_tool = "pi_tool"
+            continue
+
         if typ == "system":
             total_system += 1
             sub = obj.get("subtype")
@@ -358,6 +390,8 @@ def _has_assistant_output_text(obj: dict[str, Any]) -> bool:
     typ = obj.get("type")
     if typ == "assistant":
         return bool(_claude_assistant_text(obj))
+    if typ == "message":
+        return bool(_pi_assistant_text(obj))
     if typ != "response_item":
         return False
     return bool(_codex_assistant_output_text(obj))
@@ -386,6 +420,19 @@ def _analyze_log_chunk(
         if typ == "assistant":
             d_th += _claude_assistant_thinking_count(obj)
             d_tools += _claude_assistant_tool_use_count(obj)
+            if _has_assistant_output_text(obj):
+                last_chat_ts = _event_ts(obj)
+                last_assistant_ts = _event_ts(obj)
+            continue
+        if typ == "message":
+            if _pi_user_text(obj):
+                d_th = 0
+                d_tools = 0
+                d_sys = 0
+                last_chat_ts = _event_ts(obj)
+                continue
+            d_th += _pi_assistant_thinking_count(obj)
+            d_tools += _pi_assistant_tool_use_count(obj)
             if _has_assistant_output_text(obj):
                 last_chat_ts = _event_ts(obj)
                 last_assistant_ts = _event_ts(obj)
@@ -469,6 +516,16 @@ def _last_conversation_ts_from_tail(
             if typ == "assistant" and _has_assistant_output_text(obj):
                 last_idx = i
                 last_ts = event_ts(obj)
+                continue
+            if typ == "message":
+                if _pi_user_text(obj) or _has_assistant_output_text(obj):
+                    last_idx = i
+                    last_ts = event_ts(obj)
+                continue
+            if typ == "message" and _has_assistant_output_text(obj):
+                ts = _event_ts(obj)
+                if ts is not None:
+                    last_assistant = float(ts)
                 continue
             if typ == "event_msg":
                 p = obj.get("payload")
@@ -599,6 +656,24 @@ def _compute_idle_from_log(path: Path, max_scan_bytes: int = 8 * 1024 * 1024) ->
                     turn_open = False
                     turn_has_completion_candidate = False
                     last_terminal_event = "assistant"
+                continue
+            if typ == "message":
+                if _pi_user_text(obj):
+                    saw_user = True
+                    turn_open = True
+                    turn_has_completion_candidate = False
+                    last_terminal_event = "user"
+                    continue
+                has_text = _has_assistant_output_text(obj)
+                has_thinking = _pi_assistant_thinking_count(obj) > 0
+                has_tools = _pi_assistant_tool_use_count(obj) > 0
+                if has_text:
+                    last_terminal_event = "assistant"
+                    turn_open = False
+                    turn_has_completion_candidate = False
+                    continue
+                if turn_open and (has_thinking or has_tools):
+                    turn_has_completion_candidate = False
                 continue
             if typ == "system":
                 is_claude_format = True  # Claude uses "system" type
@@ -744,6 +819,13 @@ def _last_chat_role_ts_from_tail(
                     last_user = (i, event_ts(obj))
                 continue
             if typ == "assistant":
+                if _has_assistant_output_text(obj):
+                    last_assistant = (i, event_ts(obj))
+                continue
+            if typ == "message":
+                if _pi_user_text(obj):
+                    last_user = (i, event_ts(obj))
+                    continue
                 if _has_assistant_output_text(obj):
                     last_assistant = (i, event_ts(obj))
                 continue

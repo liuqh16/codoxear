@@ -10,7 +10,8 @@ from typing import Any
 CODEX_CLI = "codex"
 CLAUDE_CLI = "claude"
 GEMINI_CLI = "gemini"
-SUPPORTED_CLIS = (CODEX_CLI, CLAUDE_CLI, GEMINI_CLI)
+PI_CLI = "pi"
+SUPPORTED_CLIS = (CODEX_CLI, CLAUDE_CLI, GEMINI_CLI, PI_CLI)
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
@@ -21,6 +22,8 @@ def normalize_cli_name(raw: str | None, *, default: str = CODEX_CLI) -> str:
         return default
     if s in ("gemini", "google-gemini", "gemini-cli", "gemini_cli"):
         return GEMINI_CLI
+    if s in ("pi", "pi-coding-agent", "pi_coding_agent"):
+        return PI_CLI
     if s in ("claude", "claude-code", "claude_code"):
         return CLAUDE_CLI
     if s in ("codex", "openai-codex", "codex-cli"):
@@ -44,6 +47,11 @@ def default_cli_name() -> str:
 
 def cli_home(cli: str) -> Path:
     c = normalize_cli_name(cli, default=CODEX_CLI)
+    if c == PI_CLI:
+        raw = os.environ.get("PI_HOME")
+        if raw is None or (not raw.strip()):
+            return Path.home() / ".pi"
+        return Path(raw)
     if c == GEMINI_CLI:
         raw = os.environ.get("GEMINI_HOME")
         if raw is None or (not raw.strip()):
@@ -63,6 +71,8 @@ def cli_home(cli: str) -> Path:
 def cli_logs_dir(cli: str) -> Path:
     c = normalize_cli_name(cli, default=CODEX_CLI)
     home = cli_home(c)
+    if c == PI_CLI:
+        return home / "agent" / "sessions"
     if c == GEMINI_CLI:
         return home / "tmp"
     if c == CLAUDE_CLI:
@@ -72,6 +82,11 @@ def cli_logs_dir(cli: str) -> Path:
 
 def cli_bin(cli: str) -> str:
     c = normalize_cli_name(cli, default=CODEX_CLI)
+    if c == PI_CLI:
+        raw = os.environ.get("PI_BIN")
+        if raw is not None and raw.strip():
+            return raw.strip()
+        return "pi"
     if c == GEMINI_CLI:
         raw = os.environ.get("GEMINI_BIN")
         if raw is not None and raw.strip():
@@ -129,11 +144,25 @@ def is_gemini_chat_log_path(path: Path, *, gemini_tmp_dir: Path | None = None) -
     return True
 
 
+def is_pi_session_log_path(path: Path, *, pi_sessions_dir: Path | None = None) -> bool:
+    if path.suffix != ".jsonl":
+        return False
+    if pi_sessions_dir is None:
+        return "/.pi/agent/sessions/" in str(path).replace("\\", "/")
+    try:
+        path.resolve().relative_to(pi_sessions_dir.resolve())
+    except Exception:
+        return False
+    return True
+
+
 def infer_cli_from_log_path(path: Path) -> str | None:
     if is_codex_rollout_log_path(path):
         return CODEX_CLI
     if is_gemini_chat_log_path(path, gemini_tmp_dir=cli_logs_dir(GEMINI_CLI)):
         return GEMINI_CLI
+    if is_pi_session_log_path(path, pi_sessions_dir=cli_logs_dir(PI_CLI)):
+        return PI_CLI
     if is_claude_project_log_path(path, claude_projects_dir=cli_logs_dir(CLAUDE_CLI)):
         return CLAUDE_CLI
     if _UUID_RE.fullmatch(path.stem or "") and path.suffix == ".jsonl" and not is_claude_subagent_log_path(path):
@@ -148,6 +177,8 @@ def session_id_from_log_path(path: Path, *, cli: str | None = None) -> str | Non
         c = guessed if guessed is not None else CODEX_CLI
     if c == GEMINI_CLI:
         return read_gemini_session_id(path)
+    if c == PI_CLI:
+        return read_pi_session_id(path)
     if c == CLAUDE_CLI:
         sid = path.stem
         return sid if _UUID_RE.fullmatch(sid or "") else None
@@ -274,6 +305,92 @@ def _gemini_assistant_is_turn_end(msg: dict[str, Any], *, text: str | None) -> b
     if isinstance(is_final, bool):
         return is_final
     return False
+
+
+def _read_jsonl_first_object(path: Path) -> dict[str, Any] | None:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            first = f.readline().strip()
+    except Exception:
+        return None
+    if not first:
+        return None
+    try:
+        obj = json.loads(first)
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def read_pi_session_id(path: Path) -> str | None:
+    obj = _read_jsonl_first_object(path)
+    if not isinstance(obj, dict) or obj.get("type") != "session":
+        return None
+    sid = obj.get("id")
+    return sid if isinstance(sid, str) and sid.strip() else None
+
+
+def read_pi_log_cwd(path: Path) -> str | None:
+    obj = _read_jsonl_first_object(path)
+    if not isinstance(obj, dict) or obj.get("type") != "session":
+        return None
+    cwd = obj.get("cwd")
+    return cwd if isinstance(cwd, str) and cwd.strip() else None
+
+
+def pi_user_text(obj: dict[str, Any]) -> str | None:
+    if obj.get("type") != "message":
+        return None
+    msg = obj.get("message")
+    if not isinstance(msg, dict) or msg.get("role") != "user":
+        return None
+    content = msg.get("content")
+    if isinstance(content, str):
+        t = content.strip()
+        return t if t else None
+    parts = _text_parts(content)
+    return "".join(parts) if parts else None
+
+
+def pi_assistant_content_parts(obj: dict[str, Any]) -> list[dict[str, Any]]:
+    if obj.get("type") != "message":
+        return []
+    msg = obj.get("message")
+    if not isinstance(msg, dict) or msg.get("role") != "assistant":
+        return []
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return []
+    return [part for part in content if isinstance(part, dict)]
+
+
+def pi_assistant_text(obj: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    for part in pi_assistant_content_parts(obj):
+        if part.get("type") != "text":
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text.strip():
+            parts.append(text)
+    if not parts:
+        return None
+    return "".join(parts)
+
+
+def pi_assistant_tool_use_count(obj: dict[str, Any]) -> int:
+    n = 0
+    for part in pi_assistant_content_parts(obj):
+        if part.get("type") == "toolCall":
+            n += 1
+    return n
+
+
+def pi_assistant_thinking_count(obj: dict[str, Any]) -> int:
+    n = 0
+    for part in pi_assistant_content_parts(obj):
+        if part.get("type") == "thinking":
+            n += 1
+    return n
 
 
 def read_gemini_session_id(path: Path) -> str | None:

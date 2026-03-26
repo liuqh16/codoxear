@@ -161,6 +161,38 @@ class TestBrokerProcRolloutDiscovery(unittest.TestCase):
                 found = proc_find_open_rollout_log(proc_root=proc_root, root_pid=100, cwd="/gemini/work")
                 self.assertEqual(found, want)
 
+
+    def test_proc_finds_pi_session_log_by_cwd(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            proc_root = root / "proc"
+            pi_home = root / ".pi-home"
+            sessions = pi_home / "agent" / "sessions" / "--pi-work--"
+            sessions.mkdir(parents=True, exist_ok=True)
+
+            want = sessions / "2026-03-02_demo.jsonl"
+            _write_jsonl(
+                want,
+                [
+                    {"type": "session", "version": 3, "id": "pi-session", "cwd": "/pi/work", "timestamp": "2026-03-02T00:00:00.000Z"},
+                    {"type": "message", "timestamp": "2026-03-02T00:00:01.000Z", "message": {"role": "user", "content": "hello"}},
+                ],
+            )
+
+            (proc_root / "100" / "task" / "100").mkdir(parents=True, exist_ok=True)
+            (proc_root / "101" / "task" / "101").mkdir(parents=True, exist_ok=True)
+            (proc_root / "100" / "task" / "100" / "children").write_text("101\n", encoding="utf-8")
+            (proc_root / "101" / "task" / "101" / "children").write_text("\n", encoding="utf-8")
+            for pid in ("100", "101"):
+                (proc_root / pid / "fd").mkdir(parents=True, exist_ok=True)
+            os.symlink(str(want), proc_root / "101" / "fd" / "3")
+
+            with patch.dict(os.environ, {"PI_HOME": str(pi_home)}, clear=False):
+                opened = proc_open_rollout_logs(proc_root, 100)
+                self.assertIn(want, opened)
+                found = proc_find_open_rollout_log(proc_root=proc_root, root_pid=100, cwd="/pi/work")
+                self.assertEqual(found, want)
+
     def test_broker_fallback_finds_recent_claude_log(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td)

@@ -2891,6 +2891,9 @@ class SessionManager:
         elif cli_name == "gemini":
             env.setdefault("GEMINI_HOME", str(_cli_home("gemini")))
             env.setdefault("GEMINI_BIN", _cli_bin("gemini"))
+        elif cli_name == "pi":
+            env.setdefault("PI_HOME", str(_cli_home("pi")))
+            env.setdefault("PI_BIN", _cli_bin("pi"))
         else:
             env.setdefault("CODEX_HOME", str(_cli_home("codex")))
             env.setdefault("CODEX_BIN", _cli_bin("codex"))

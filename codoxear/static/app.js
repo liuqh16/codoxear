@@ -347,6 +347,7 @@
       function normalizeCliName(raw, fallback = "codex") {
         const v = String(raw || "").trim().toLowerCase();
         if (v === "gemini" || v === "google-gemini" || v === "gemini-cli" || v === "gemini_cli") return "gemini";
+        if (v === "pi" || v === "pi-coding-agent" || v === "pi_coding_agent") return "pi";
         if (v === "claude" || v === "claude-code" || v === "claude_code") return "claude";
         if (v === "codex" || v === "openai-codex" || v === "codex-cli") return "codex";
         return fallback;
@@ -359,6 +360,7 @@
       function resumeCommandForSession(sid, session) {
         const cli = sessionCliName(session);
         if (cli === "gemini") return `gemini --resume ${sid}`;
+        if (cli === "pi") return `pi --session ${sid}`;
         if (cli === "claude") return `claude --resume ${sid}`;
         return `codex resume ${sid}`;
       }
@@ -366,6 +368,7 @@
       function cliDisplayName(cli) {
         const v = normalizeCliName(cli, "codex");
         if (v === "gemini") return "Gemini";
+        if (v === "pi") return "Pi";
         if (v === "claude") return "Claude";
         return "Codex";
       }
@@ -373,6 +376,7 @@
       function cliLogoPath(cli) {
         const v = normalizeCliName(cli, "codex");
         if (v === "gemini") return resolveAppUrl("/static/logos/gemini.svg");
+        if (v === "pi") return resolveAppUrl("/static/logos/pi.svg");
         if (v === "claude") return resolveAppUrl("/static/logos/claude.svg");
         return resolveAppUrl("/static/logos/codex.svg");
       }
@@ -1585,6 +1589,12 @@
             ]),
             el("div", { class: "cliChoiceLabel", text: "Gemini" }),
           ]),
+          el("button", { class: "cliChoiceBtn", id: "cliChoicePi", type: "button", "data-cli": "pi" }, [
+            el("div", { class: "cliChoiceLogo" }, [
+              el("img", { src: "static/logos/pi.svg", alt: "Pi", width: "32", height: "32" }),
+            ]),
+            el("div", { class: "cliChoiceLabel", text: "Pi" }),
+          ]),
         ]);
         const cliChoiceCancel = el("button", { class: "cliChoiceCancel", id: "cliChoiceCancel", type: "button", text: "Cancel" });
         const cliChoice = el("div", { class: "cliChoice", id: "cliChoice", role: "dialog", "aria-label": "Choose CLI" }, [
@@ -1858,7 +1868,7 @@
         }
         cliChoiceBackdrop.onclick = hideCliChoice;
         cliChoiceCancel.onclick = hideCliChoice;
-        for (const btn of [$("#cliChoiceCodex"), $("#cliChoiceClaude"), $("#cliChoiceGemini")]) {
+        for (const btn of [$("#cliChoiceCodex"), $("#cliChoiceClaude"), $("#cliChoiceGemini"), $("#cliChoicePi")]) {
           btn.onclick = () => {
             const cli = btn.getAttribute("data-cli");
             if (cliChoiceResolve) {

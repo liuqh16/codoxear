@@ -33,9 +33,15 @@ from codoxear.cli_support import cli_logs_dir as _cli_logs_dir
 from codoxear.cli_support import is_claude_project_log_path as _is_claude_project_log_path
 from codoxear.cli_support import is_codex_rollout_log_path as _is_codex_rollout_log_path
 from codoxear.cli_support import is_gemini_chat_log_path as _is_gemini_chat_log_path
+from codoxear.cli_support import is_pi_session_log_path as _is_pi_session_log_path
 from codoxear.cli_support import normalize_cli_name as _normalize_cli_name
+from codoxear.cli_support import pi_assistant_text as _pi_assistant_text
+from codoxear.cli_support import pi_assistant_thinking_count as _pi_assistant_thinking_count
+from codoxear.cli_support import pi_assistant_tool_use_count as _pi_assistant_tool_use_count
+from codoxear.cli_support import pi_user_text as _pi_user_text
 from codoxear.cli_support import read_claude_log_cwd as _read_claude_log_cwd
 from codoxear.cli_support import read_gemini_log_cwd as _read_gemini_log_cwd
+from codoxear.cli_support import read_pi_log_cwd as _read_pi_log_cwd
 from codoxear.cli_support import session_id_from_log_path as _session_id_from_log_path
 from codoxear import pty_util as _pty_util
 from codoxear.util import default_app_dir as _default_app_dir
@@ -334,6 +340,42 @@ def _find_recent_gemini_chat_log(
     return None
 
 
+def _find_recent_pi_session_log(
+    *,
+    sessions_dir: Path,
+    cwd: str,
+    after_ts: float,
+    exclude_paths: set[Path] | None = None,
+) -> Path | None:
+    if not isinstance(cwd, str) or (not cwd):
+        return None
+    if not sessions_dir.exists():
+        return None
+    cands: list[tuple[float, Path]] = []
+    for p in sessions_dir.rglob("*.jsonl"):
+        if not _is_pi_session_log_path(p, pi_sessions_dir=sessions_dir):
+            continue
+        try:
+            mt = float(p.stat().st_mtime)
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+        if mt < float(after_ts) - 2.0:
+            continue
+        cands.append((mt, p))
+    if not cands:
+        return None
+    cands.sort(key=lambda t: t[0], reverse=True)
+    for _mt, p in cands:
+        if _path_is_excluded(p, exclude_paths):
+            continue
+        pcwd = _read_pi_log_cwd(p)
+        if isinstance(pcwd, str) and pcwd == cwd:
+            return p
+    return None
+
+
 def _claimed_rollout_paths_from_sock_meta(*, sock_dir: Path, exclude_sock: Path | None = None) -> set[Path]:
     out: set[Path] = set()
     if not sock_dir.exists():
@@ -613,7 +655,7 @@ def _obj_event_ts(obj: dict[str, Any]) -> float | None:
 
 
 def _seed_codex_state_from_rollout(st: "State", log_path: Path) -> None:
-    if CLI_KIND != "codex":
+    if CLI_KIND not in ("codex", "pi"):
         return
     st.pending_calls.clear()
     st.busy = False
@@ -661,6 +703,31 @@ def _apply_rollout_obj_to_state(st: "State", obj: dict[str, Any], now_ts: float)
             if st.turn_open and _assistant_obj_is_completion_candidate(obj):
                 st.turn_has_completion_candidate = True
             st.busy = True
+            st.last_turn_activity_ts = now_ts
+            return
+        if tool_count > 0 or thinking_count > 0:
+            _reopen_turn_on_activity(st)
+            if st.turn_open:
+                st.turn_has_completion_candidate = False
+            st.busy = True
+            st.last_turn_activity_ts = now_ts
+            return
+        return
+
+    if typ == "message":
+        if _pi_user_text(obj):
+            st.pending_calls.clear()
+            st.busy = True
+            st.turn_open = True
+            st.turn_has_completion_candidate = False
+            st.last_interrupt_hint_ts = 0.0
+            st.last_turn_activity_ts = now_ts
+            return
+        has_text = bool(_pi_assistant_text(obj))
+        tool_count = _pi_assistant_tool_use_count(obj)
+        thinking_count = _pi_assistant_thinking_count(obj)
+        if has_text:
+            _close_turn_state(st, mark_end=True)
             st.last_turn_activity_ts = now_ts
             return
         if tool_count > 0 or thinking_count > 0:
@@ -1472,6 +1539,10 @@ class Broker:
             if not _is_gemini_chat_log_path(lp, gemini_tmp_dir=self.sessions_dir):
                 return
             sid = self._session_id_from_rollout_path(lp)
+        elif CLI_KIND == "pi":
+            if not _is_pi_session_log_path(lp, pi_sessions_dir=self.sessions_dir):
+                return
+            sid = self._session_id_from_rollout_path(lp)
         else:
             return
         if not sid:
@@ -1527,6 +1598,8 @@ class Broker:
                     os.environ["CLAUDE_HOME"] = str(self.codex_home)
                 elif CLI_KIND == "gemini":
                     os.environ["GEMINI_HOME"] = str(self.codex_home)
+                elif CLI_KIND == "pi":
+                    os.environ["PI_HOME"] = str(self.codex_home)
                 else:
                     os.environ["CODEX_HOME"] = str(self.codex_home)
                 if _env_flag("CODEX_WEB_UNSET_ANTHROPIC_AUTH_TOKEN", False):
@@ -1635,7 +1708,7 @@ class Broker:
 def main() -> None:
     _require_proc()
     ap = argparse.ArgumentParser(
-        description="Foreground PTY broker for codex/claude/gemini: preserves terminal UX and registers a control socket for Codoxear."
+        description="Foreground PTY broker for codex/claude/gemini/pi: preserves terminal UX and registers a control socket for Codoxear."
     )
     ap.add_argument("--cwd", default=os.getcwd(), help="Directory to run the target CLI in (default: current directory)")
     ap.add_argument("args", nargs=argparse.REMAINDER, help="Arguments after -- are passed to the target CLI")
