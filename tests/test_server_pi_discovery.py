@@ -57,7 +57,9 @@ class TestServerPiDiscovery(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with patch("codoxear.server.SOCK_DIR", sock_dir), patch.object(
+            with patch("codoxear.server.SOCK_DIR", sock_dir), patch(
+                "codoxear.server._discover_alive_pi_session_files", return_value={}
+            ), patch.object(
                 mgr, "_sock_call", return_value={"busy": True, "queue_len": 0, "token": None}
             ):
                 mgr._discover_existing(force=True)
@@ -127,6 +129,34 @@ class TestServerPiDiscovery(unittest.TestCase):
             found = _discover_alive_pi_session_files(proc_root, pi_root)
 
         self.assertEqual(found, {resolved: 101})
+
+    def test_discover_alive_pi_session_files_falls_back_to_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            proc_root = root / "proc"
+            pi_root = root / "pi" / "agent" / "sessions"
+            cwd = "/work/project"
+            session_dir = pi_root / "--work-project--"
+            session_dir.mkdir(parents=True, exist_ok=True)
+            older = session_dir / "2026-03-25_old.jsonl"
+            newer = session_dir / "2026-03-26_new.jsonl"
+            older.write_text(
+                '{"type":"session","version":3,"id":"old","timestamp":"2026-03-25T10:00:00.000Z","cwd":"/work/project"}\n',
+                encoding="utf-8",
+            )
+            newer.write_text(
+                '{"type":"session","version":3,"id":"new","timestamp":"2026-03-26T10:00:00.000Z","cwd":"/work/project"}\n',
+                encoding="utf-8",
+            )
+            newer.touch()
+            pid_dir = proc_root / "101"
+            (pid_dir / "fd").mkdir(parents=True, exist_ok=True)
+            (pid_dir / "cmdline").write_bytes(b"pi\x00")
+            (pid_dir / "cwd").symlink_to(cwd)
+
+            found = _discover_alive_pi_session_files(proc_root, pi_root)
+
+        self.assertEqual(found, {newer.resolve(): 101})
 
 
 if __name__ == "__main__":

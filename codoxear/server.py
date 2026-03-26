@@ -1389,6 +1389,16 @@ def _proc_pid_cmdline(proc_root: Path, pid: int) -> str:
     return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
 
 
+def _proc_pid_cwd(proc_root: Path, pid: int) -> str:
+    p = proc_root / str(pid) / "cwd"
+    try:
+        return os.readlink(p)
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        return ""
+
+
 def _discover_alive_pi_session_files(proc_root: Path, sessions_dir: Path) -> dict[Path, int]:
     out: dict[Path, int] = {}
     if (not proc_root.exists()) or (not sessions_dir.exists()):
@@ -1402,6 +1412,20 @@ def _discover_alive_pi_session_files(proc_root: Path, sessions_dir: Path) -> dic
         entries = list(proc_root.iterdir())
     except Exception:
         return out
+
+    cwd_latest: dict[str, Path] = {}
+    try:
+        session_files = sorted(sessions_dir.rglob("*.jsonl"), key=lambda p: float(p.stat().st_mtime), reverse=True)
+    except Exception:
+        session_files = []
+    for session_file in session_files:
+        cwd = _read_pi_log_cwd(session_file)
+        if not isinstance(cwd, str) or not cwd:
+            continue
+        cwd_latest.setdefault(cwd, session_file.resolve())
+
+    claimed_paths: set[Path] = set()
+    pending_cwd_pids: list[tuple[int, str]] = []
     for proc_dir in entries:
         if not proc_dir.name.isdigit():
             continue
@@ -1418,11 +1442,13 @@ def _discover_alive_pi_session_files(proc_root: Path, sessions_dir: Path) -> dic
         padded = f" {cmdline} "
         if not (" pi " in padded or "/pi " in padded or padded.endswith(" /pi ")):
             continue
+        cwd = _proc_pid_cwd(proc_root, pid)
         fd_dir = proc_dir / "fd"
+        found_fd_match = False
         try:
             fd_entries = list(fd_dir.iterdir())
         except Exception:
-            continue
+            fd_entries = []
         for ent in fd_entries:
             try:
                 tgt = os.readlink(ent)
@@ -1442,6 +1468,17 @@ def _discover_alive_pi_session_files(proc_root: Path, sessions_dir: Path) -> dic
             except Exception:
                 continue
             out.setdefault(resolved, pid)
+            claimed_paths.add(resolved)
+            found_fd_match = True
+        if (not found_fd_match) and cwd:
+            pending_cwd_pids.append((pid, cwd))
+
+    for pid, cwd in pending_cwd_pids:
+        session_file = cwd_latest.get(cwd)
+        if session_file is None or session_file in claimed_paths:
+            continue
+        out.setdefault(session_file, pid)
+        claimed_paths.add(session_file)
     return out
 
 
