@@ -4997,9 +4997,7 @@
           const cli = await showCliChoice({ title: "Choose CLI for duplicate session", cwd });
           if (!cli) return;
           const cliName = normalizeCliName(cli, "");
-          const sessionFile = typeof s?.session_file === "string" ? s.session_file.trim() : "";
-          const args = cliName === "pi" && sessionFile ? ["--fork", sessionFile] : undefined;
-          await spawnSessionWithCwd(cwd, { alias, cli: cliName, args });
+          await spawnSessionWithCwd(cwd, { alias, cli: cliName });
         }
 
         duplicateBtn.onclick = async () => {
