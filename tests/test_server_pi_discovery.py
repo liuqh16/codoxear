@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from codoxear.server import Session
 from codoxear.server import SessionManager
 from codoxear.server import _discover_alive_pi_session_files
 
@@ -157,6 +158,35 @@ class TestServerPiDiscovery(unittest.TestCase):
             found = _discover_alive_pi_session_files(proc_root, pi_root)
 
         self.assertEqual(found, {newer.resolve(): 101})
+
+    def test_refresh_session_meta_skips_native_pi_session(self) -> None:
+        mgr = self._mgr()
+        with tempfile.TemporaryDirectory() as td:
+            session_file = Path(td) / "native.jsonl"
+            session_file.write_text(
+                '{"type":"session","version":3,"id":"native","timestamp":"2026-03-26T10:00:00.000Z","cwd":"/work/project"}\n',
+                encoding="utf-8",
+            )
+            mgr._sessions["native"] = Session(
+                session_id="native",
+                thread_id="native",
+                broker_pid=0,
+                codex_pid=123,
+                cli="pi",
+                owned=False,
+                start_ts=1.0,
+                cwd="/work/project",
+                log_path=session_file,
+                sock_path=session_file,
+                backend="native",
+                session_file=str(session_file),
+                resume_hint=f"pi --session {session_file}",
+                live=False,
+            )
+
+            mgr.refresh_session_meta("native")
+
+        self.assertIn("native", mgr._sessions)
 
 
 if __name__ == "__main__":

@@ -2730,6 +2730,8 @@ class SessionManager:
             s = self._sessions.get(session_id)
             if not s:
                 return
+            if getattr(s, "backend", "pty") == "native":
+                return
             sock = s.sock_path
         meta_path = sock.with_suffix(".json")
         if not meta_path.exists():
