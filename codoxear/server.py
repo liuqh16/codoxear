@@ -2459,62 +2459,9 @@ class SessionManager:
                         self._reset_log_caches(prev, meta_log_off=meta_log_off)
                     if s.last_assistant_ts is not None:
                         prev.last_assistant_ts = s.last_assistant_ts
-        pi_sessions_dir = _cli_logs_dir("pi")
-        alive_pi_sessions = _discover_alive_pi_session_files(Path("/proc"), pi_sessions_dir)
-        active_native_pi_ids: set[str] = set()
-        for session_file, pi_pid in sorted(alive_pi_sessions.items(), key=lambda item: str(item[0])):
-            session_file_str = str(session_file)
-            if session_file_str in live_pi_session_files:
-                continue
-            session_id = _read_pi_session_id(session_file)
-            if not isinstance(session_id, str) or not session_id:
-                continue
-            active_native_pi_ids.add(session_id)
-            header = _read_pi_session_header(session_file) or {}
-            cwd = _read_pi_log_cwd(session_file) or str(session_file.parent)
-            start_ts = _parse_pi_timestamp(header.get("timestamp"))
-            if start_ts is None:
-                try:
-                    start_ts = float(session_file.stat().st_mtime)
-                except Exception:
-                    start_ts = time.time()
-            last_role_ts = _last_chat_role_ts_from_tail(session_file, max_scan_bytes=CHAT_INIT_MAX_SCAN_BYTES)
-            last_assistant_ts = _last_assistant_ts_from_tail(session_file, max_scan_bytes=CHAT_INIT_MAX_SCAN_BYTES)
-            busy = bool(last_role_ts is not None and last_role_ts[0] == "user")
-            meta_log_off = int(session_file.stat().st_size)
-            s = Session(
-                session_id=session_id,
-                thread_id=session_id,
-                broker_pid=0,
-                codex_pid=int(pi_pid),
-                cli="pi",
-                owned=False,
-                start_ts=float(start_ts),
-                cwd=str(cwd),
-                log_path=session_file,
-                sock_path=session_file,
-                backend="native",
-                session_file=session_file_str,
-                resume_hint=f"pi --session {session_file_str}",
-                live=False,
-                busy=busy,
-                queue_len=0,
-                token=None,
-                last_chat_ts=(last_role_ts[1] if last_role_ts is not None else None),
-                last_assistant_ts=last_assistant_ts,
-                meta_thinking=0,
-                meta_tools=0,
-                meta_system=0,
-                meta_log_off=meta_log_off,
-            )
-            with self._lock:
-                prev = self._sessions.get(session_id)
-                if prev is None or (prev.cli == "pi" and getattr(prev, "backend", "pty") == "native"):
-                    self._reset_log_caches(s, meta_log_off=meta_log_off)
-                    self._sessions[session_id] = s
         with self._lock:
             for sid, sess in list(self._sessions.items()):
-                if sess.cli == "pi" and getattr(sess, "backend", "pty") == "native" and sid not in active_native_pi_ids:
+                if sess.cli == "pi" and getattr(sess, "backend", "pty") == "native":
                     self._sessions.pop(sid, None)
             self._last_discover_ts = time.time()
 

@@ -7,9 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from codoxear.server import Session
 from codoxear.server import SessionManager
-from codoxear.server import _discover_alive_pi_session_files
 
 
 class TestServerPiDiscovery(unittest.TestCase):
@@ -58,9 +56,7 @@ class TestServerPiDiscovery(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with patch("codoxear.server.SOCK_DIR", sock_dir), patch(
-                "codoxear.server._discover_alive_pi_session_files", return_value={}
-            ), patch.object(
+            with patch("codoxear.server.SOCK_DIR", sock_dir), patch.object(
                 mgr, "_sock_call", return_value={"busy": True, "queue_len": 0, "token": None}
             ):
                 mgr._discover_existing(force=True)
@@ -77,7 +73,7 @@ class TestServerPiDiscovery(unittest.TestCase):
         self.assertEqual(row["session_file"], str(log_path))
         self.assertEqual(row["resume_hint"], f"pi --session {log_path}")
 
-    def test_discover_existing_lists_alive_native_pi_session_only(self) -> None:
+    def test_discover_existing_ignores_native_pi_sessions(self) -> None:
         mgr = self._mgr()
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -98,95 +94,8 @@ class TestServerPiDiscovery(unittest.TestCase):
             ), patch("codoxear.server._pid_alive", side_effect=lambda pid: pid == 4242):
                 mgr._discover_existing(force=True)
                 sessions = mgr.list_sessions()
-                state = mgr.get_state("native-pi")
 
-        self.assertEqual(len(sessions), 1)
-        row = sessions[0]
-        self.assertEqual(row["cli"], "pi")
-        self.assertEqual(row["thread_id"], "native-pi")
-        self.assertEqual(row["log_path"], str(session_file.resolve()))
-        self.assertEqual(row["backend"], "native")
-        self.assertEqual(row["session_file"], str(session_file.resolve()))
-        self.assertEqual(row["resume_hint"], f"pi --session {session_file.resolve()}")
-        self.assertTrue(row["busy"])
-        self.assertEqual(state, {"busy": True, "queue_len": 0, "token": None})
-
-    def test_discover_alive_pi_session_files_filters_non_pi_processes(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            proc_root = root / "proc"
-            pi_root = root / "pi" / "agent" / "sessions"
-            pi_root.mkdir(parents=True, exist_ok=True)
-            session_file = pi_root / "demo.jsonl"
-            session_file.write_text("{}\n", encoding="utf-8")
-
-            for pid, cmd in (("101", b"pi\x00--session\x00"), ("202", b"vim\x00")):
-                (proc_root / pid / "fd").mkdir(parents=True, exist_ok=True)
-                (proc_root / pid / "cmdline").write_bytes(cmd)
-            resolved = session_file.resolve()
-            (proc_root / "101" / "fd" / "3").symlink_to(resolved)
-            (proc_root / "202" / "fd" / "3").symlink_to(resolved)
-
-            found = _discover_alive_pi_session_files(proc_root, pi_root)
-
-        self.assertEqual(found, {resolved: 101})
-
-    def test_discover_alive_pi_session_files_falls_back_to_cwd(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            proc_root = root / "proc"
-            pi_root = root / "pi" / "agent" / "sessions"
-            cwd = "/work/project"
-            session_dir = pi_root / "--work-project--"
-            session_dir.mkdir(parents=True, exist_ok=True)
-            older = session_dir / "2026-03-25_old.jsonl"
-            newer = session_dir / "2026-03-26_new.jsonl"
-            older.write_text(
-                '{"type":"session","version":3,"id":"old","timestamp":"2026-03-25T10:00:00.000Z","cwd":"/work/project"}\n',
-                encoding="utf-8",
-            )
-            newer.write_text(
-                '{"type":"session","version":3,"id":"new","timestamp":"2026-03-26T10:00:00.000Z","cwd":"/work/project"}\n',
-                encoding="utf-8",
-            )
-            newer.touch()
-            pid_dir = proc_root / "101"
-            (pid_dir / "fd").mkdir(parents=True, exist_ok=True)
-            (pid_dir / "cmdline").write_bytes(b"pi\x00")
-            (pid_dir / "cwd").symlink_to(cwd)
-
-            found = _discover_alive_pi_session_files(proc_root, pi_root)
-
-        self.assertEqual(found, {newer.resolve(): 101})
-
-    def test_refresh_session_meta_skips_native_pi_session(self) -> None:
-        mgr = self._mgr()
-        with tempfile.TemporaryDirectory() as td:
-            session_file = Path(td) / "native.jsonl"
-            session_file.write_text(
-                '{"type":"session","version":3,"id":"native","timestamp":"2026-03-26T10:00:00.000Z","cwd":"/work/project"}\n',
-                encoding="utf-8",
-            )
-            mgr._sessions["native"] = Session(
-                session_id="native",
-                thread_id="native",
-                broker_pid=0,
-                codex_pid=123,
-                cli="pi",
-                owned=False,
-                start_ts=1.0,
-                cwd="/work/project",
-                log_path=session_file,
-                sock_path=session_file,
-                backend="native",
-                session_file=str(session_file),
-                resume_hint=f"pi --session {session_file}",
-                live=False,
-            )
-
-            mgr.refresh_session_meta("native")
-
-        self.assertIn("native", mgr._sessions)
+        self.assertEqual(sessions, [])
 
 
 if __name__ == "__main__":
