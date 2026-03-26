@@ -505,6 +505,14 @@ class TestBrokerBusyState(unittest.TestCase):
         self.assertEqual(st.last_turn_activity_ts, 30.0)
         self.assertEqual(st.last_interrupt_hint_ts, 0.0)
 
+    def test_pi_working_hint_without_interrupt_phrase_marks_busy(self) -> None:
+        st = _state()
+        with patch("codoxear.broker.CLI_KIND", "pi"):
+            _update_busy_from_pty_text(st, "\x1b[2mWorking...\x1b[0m", now_ts=31.0)
+        self.assertTrue(st.busy)
+        self.assertTrue(st.turn_open)
+        self.assertEqual(st.last_turn_activity_ts, 31.0)
+
     def test_non_codex_stale_interrupt_tail_does_not_rearm_busy_on_unrelated_text(self) -> None:
         st = _state()
         with patch("codoxear.broker.CLI_KIND", "claude"):

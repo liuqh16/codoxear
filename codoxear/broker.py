@@ -479,6 +479,11 @@ def _claude_assistant_stop_reason_is_turn_end(obj: dict[str, Any]) -> bool:
     return bool(sr) and (sr != "tool_use")
 
 
+def _pi_working_hint_seen_in_new_text(*, cleaned: str) -> bool:
+    text = cleaned.lower()
+    return "working..." in text or " working..." in text
+
+
 def _update_busy_from_pty_text(st: "State", text: str, now_ts: float) -> None:
     cleaned = _strip_ansi(text)
     if not cleaned:
@@ -500,6 +505,12 @@ def _update_busy_from_pty_text(st: "State", text: str, now_ts: float) -> None:
         return
     if _compacting_hint_seen_in_new_text(tail=tail, cleaned=cleaned):
         st.busy = True
+        if now_ts > st.last_turn_activity_ts:
+            st.last_turn_activity_ts = now_ts
+        return
+    if CLI_KIND == "pi" and _pi_working_hint_seen_in_new_text(cleaned=cleaned):
+        st.busy = True
+        _reopen_turn_on_activity(st)
         if now_ts > st.last_turn_activity_ts:
             st.last_turn_activity_ts = now_ts
         return
