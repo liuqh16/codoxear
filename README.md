@@ -4,23 +4,25 @@
   <img src="codoxear/static/codoxear-icon.png" alt="Codoxear icon" width="140" />
 </p>
 
-Unofficial mobile handoff for Codex, Claude Code, and Gemini CLI TUI sessions.
+Unofficial mobile handoff for Codex, Claude Code, Gemini CLI, and Pi TUI sessions.
 
 Codoxear runs a small web server on your computer and exposes a phone-friendly UI for continuing the same live Codex TUI session from mobile. Your environment stays local (filesystem, tools, credentials). The phone is a view/controller.
 
 Name: "codoxear" = "codex dogear" (dog-ear a page so you can pick up where you left off), meaning you can seamlessly continue the same work from different devices.
 
-Not affiliated with OpenAI, Anthropic, or Google. "Codex", "Claude", and "Gemini" are referenced only for CLI compatibility.
+Not affiliated with OpenAI, Anthropic, Google, or the Pi Coding Agent project. "Codex", "Claude", "Gemini", and "Pi" are referenced only for CLI compatibility.
 
-## Major feature: Gemini support
+## Multi-CLI support
 
-Gemini is a first-class CLI in Codoxear (alongside Codex and Claude), not an adapter workaround.
+Gemini and Pi are first-class CLIs in Codoxear (alongside Codex and Claude), not adapter workarounds.
 
-- One UI supports all three CLIs: create, continue, and manage sessions in the same workspace view.
+- One UI supports all four CLIs: create, continue, and manage sessions in the same workspace view.
 - Web-owned sessions support `cli=gemini` and pass `GEMINI_HOME` / `GEMINI_BIN` to the runtime.
 - Terminal-owned Gemini sessions are discovered from `~/.gemini/tmp/**/chats/session-*.json`.
 - Session tools and resume helpers support Gemini resume commands (`gemini --resume <session_id>`).
 - Gemini chat JSON is parsed into unified user/assistant events with turn-end markers for queue/busy/idle behavior.
+- Pi support on `feat/pi-pty-parity` is being aligned to the same interactive PTY + `/proc` discovery model used for Codex, rather than a separate RPC backend.
+- Terminal-owned Pi sessions can be started via `scripts/codoxear-pi` or `CODEX_WEB_CLI=pi codoxear-broker -- ...`.
 
 See implementation details in `docs/features/multi-cli-support.md`.
 
@@ -86,6 +88,10 @@ Install Codoxear (installs `codoxear-server` and `codoxear-broker`):
    gemini() {
      CODEX_WEB_CLI=gemini codoxear-broker -- "$@"
    }
+
+   pi() {
+     CODEX_WEB_CLI=pi codoxear-broker -- "$@"
+   }
    ```
 
    If you only use one CLI, keep just that function.
@@ -113,9 +119,9 @@ The status helper reads the broker socket sidecars and reports `running/idle`, q
 
 ## User stories
 
-- Desktop Linux: start Codex, Claude, or Gemini in your GUI terminal emulator, then continue the same live session on your phone or a laptop browser.
-- Headless Linux: start Codex, Claude, or Gemini inside `tmux`, then attach from your phone or a laptop browser. This avoids using a mobile terminal emulator for TUI interaction (for example Termius).
-- Web-owned sessions: start a new Codex/Claude/Gemini session from the Codoxear UI, use it from mobile, and kill it from the UI when finished.
+- Desktop Linux: start Codex, Claude, Gemini, or Pi in your GUI terminal emulator, then continue the same live session on your phone or a laptop browser.
+- Headless Linux: start Codex, Claude, Gemini, or Pi inside `tmux`, then attach from your phone or a laptop browser. This avoids using a mobile terminal emulator for TUI interaction (for example Termius).
+- Web-owned sessions: start a new Codex/Claude/Gemini/Pi session from the Codoxear UI, use it from mobile, and kill it from the UI when finished.
 
 ## Session ownership
 
@@ -128,6 +134,7 @@ If you start a web-owned session and later want to continue it in your terminal,
 - Codex: `codex resume <session_id>`
 - Claude: `claude --resume <session_id>`
 - Gemini: `gemini --resume <session_id>`
+- Pi: `pi --session <session_id-or-session-file>`
 - Or use `scripts/codoxear-resume` to pick the right command automatically from metadata.
 
 ## Known limitations
@@ -161,13 +168,15 @@ Set these in `.env` (or in the process environment):
 - `CODEX_WEB_HOST` (default `::`)
 - `CODEX_WEB_PORT` (default `8743`)
 - `CODEX_WEB_URL_PREFIX` (default empty). Example: `/codoxear` serves the UI at `/codoxear/` and the API under `/codoxear/api/*`.
-- `CODEX_WEB_DEFAULT_CLI` (default `codex`) - default CLI used for new web sessions when `cli` is omitted (`codex`, `claude`, or `gemini`).
+- `CODEX_WEB_DEFAULT_CLI` (default `codex`) - default CLI used for new web sessions when `cli` is omitted (`codex`, `claude`, `gemini`, or `pi`).
 - `CODEX_HOME` (default `~/.codex`)
 - `CODEX_BIN` (default `codex`)
 - `CLAUDE_HOME` (default `~/.claude`)
 - `CLAUDE_BIN` (default `claude`)
 - `GEMINI_HOME` (default `~/.gemini`)
 - `GEMINI_BIN` (default `gemini`). Can point to a wrapper such as `/usr/local/bin/gemini-web` to enforce `--approval-mode yolo` for web-owned Gemini sessions.
+- `PI_HOME` (default `~/.pi`)
+- `PI_BIN` (default `pi`)
 - `CODEX_WEB_HARNESS_IDLE_SECONDS` (default `60`)
 - `CODEX_WEB_FD_POLL_SECONDS` (default `1.0`) - how often the broker scans `/proc` to detect the active `rollout-*.jsonl`
 
