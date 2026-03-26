@@ -3528,16 +3528,7 @@
           dupBtn.onclick = async (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const cwd = s && s.cwd && s.cwd !== "?" ? s.cwd : "";
-            if (!cwd) {
-              setToast("cwd unavailable");
-              return;
-            }
-            const base = sessionDisplayName(s) || baseName(cwd) || "Session";
-            const alias = buildDuplicateAlias(base);
-            const cli = await showCliChoice({ title: "Choose CLI for duplicate session", cwd });
-            if (!cli) return;
-            await spawnSessionWithCwd(cwd, { alias, cli });
+            await duplicateSessionFlow(s);
           };
           actionButtons.unshift(dupBtn);
           if (delBtn) actionButtons.push(delBtn);
@@ -4873,19 +4864,20 @@
           return brokerPid;
         }
 
-        async function spawnSessionWithCwd(cwd, { alias, cli } = {}) {
+        async function spawnSessionWithCwd(cwd, { alias, cli, args } = {}) {
           if (!cwd || !String(cwd).trim()) {
             setToast("cwd unavailable");
             return null;
           }
           const cliName = normalizeCliName(cli, "");
           if (!cliName) {
-            setToast("invalid cli (use codex, claude, or gemini)");
+            setToast("invalid cli (use codex, claude, gemini, or pi)");
             return null;
           }
+          const spawnArgs = Array.isArray(args) ? args.filter((x) => typeof x === "string" && x) : undefined;
           try {
             setToast("starting...");
-            const res = await api("/api/sessions", { method: "POST", body: { cwd: String(cwd), cli: cliName } });
+            const res = await api("/api/sessions", { method: "POST", body: { cwd: String(cwd), cli: cliName, args: spawnArgs } });
             const brokerPid = res && res.broker_pid ? Number(res.broker_pid) : null;
             if (!brokerPid) {
               setToast("start failed");
@@ -4993,9 +4985,8 @@
           setSidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
         };
 
-        duplicateBtn.onclick = async () => {
-          if (!selected) return;
-          const s = sessionIndex.get(selected);
+        async function duplicateSessionFlow(session) {
+          const s = session || (selected ? sessionIndex.get(selected) : null);
           const cwd = s && s.cwd && s.cwd !== "?" ? s.cwd : "";
           if (!cwd) {
             setToast("cwd unavailable");
@@ -5005,7 +4996,15 @@
           const alias = buildDuplicateAlias(base);
           const cli = await showCliChoice({ title: "Choose CLI for duplicate session", cwd });
           if (!cli) return;
-          await spawnSessionWithCwd(cwd, { alias, cli });
+          const cliName = normalizeCliName(cli, "");
+          const sessionFile = typeof s?.session_file === "string" ? s.session_file.trim() : "";
+          const args = cliName === "pi" && sessionFile ? ["--fork", sessionFile] : undefined;
+          await spawnSessionWithCwd(cwd, { alias, cli: cliName, args });
+        }
+
+        duplicateBtn.onclick = async () => {
+          if (!selected) return;
+          await duplicateSessionFlow(selected ? sessionIndex.get(selected) : null);
         };
 
 	        backdrop.onclick = () => setSidebarOpen(false);

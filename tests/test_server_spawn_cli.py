@@ -311,6 +311,18 @@ class TestServerSpawnCli(unittest.TestCase):
         self.assertTrue(bool(env.get("PI_HOME")))
         self.assertTrue(bool(env.get("PI_BIN")))
 
+    def test_spawn_web_session_pi_preserves_fork_args(self) -> None:
+        mgr = self._mgr()
+        with patch("codoxear.server._env_flag", return_value=False), patch(
+            "codoxear.server._wait_or_raise", return_value=None
+        ), patch("codoxear.server.subprocess.Popen", return_value=_DummyProc(6548)) as popen:
+            res = mgr.spawn_web_session(cwd="/tmp", cli="pi", args=["--fork", "/tmp/pi-session.jsonl"])
+
+        self.assertEqual(res.get("broker_pid"), 6548)
+        argv = popen.call_args.args[0]
+        self.assertIn("--fork", argv)
+        self.assertIn("/tmp/pi-session.jsonl", argv)
+
     def test_spawn_web_session_rejects_unknown_cli(self) -> None:
         mgr = self._mgr()
         with self.assertRaises(ValueError):
