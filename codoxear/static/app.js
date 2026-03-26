@@ -3434,7 +3434,6 @@
           const badges = [];
           badges.push(badge);
           if (q) badges.push(q);
-          if (isReadOnlySession(s)) badges.push(el("span", { class: "badge", text: "read-only" }));
           if (isSessionUnread(s)) badges.push(el("span", { class: "unreadDot", title: "Unread response" }));
           let delBtn = null;
           const renameCardBtn = el("button", {
@@ -3511,7 +3510,10 @@
             el("div", { class: "sessionBadges" }, badges),
           ]);
           const updatedTs = typeof s.updated_ts === "number" && Number.isFinite(s.updated_ts) ? s.updated_ts : s.start_ts;
-          const meta = el("div", { class: "muted subLine", text: updatedTs ? `last ${fmtTs(updatedTs)}` : "" });
+          const metaParts = [];
+          if (updatedTs) metaParts.push(`last ${fmtTs(updatedTs)}`);
+          if (isReadOnlySession(s)) metaParts.push("read-only");
+          const meta = el("div", { class: "muted subLine", text: metaParts.join(" · ") });
           const summaryEl = el("div", { class: "sessionSummary muted", text: "" });
           applySessionSummaryEl(summaryEl, s.session_id);
           const mainCol = el("div", { class: "sessionMain" }, [top, meta, summaryEl]);
