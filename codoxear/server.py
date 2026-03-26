@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import errno
 import hashlib
 import hmac
@@ -30,9 +31,12 @@ from typing import Any
 
 from .cli_support import cli_bin as _cli_bin
 from .cli_support import cli_home as _cli_home
+from .cli_support import cli_logs_dir as _cli_logs_dir
 from .cli_support import infer_cli_from_log_path as _infer_cli_from_log_path
 from .cli_support import normalize_cli_name as _normalize_cli_name
 from .cli_support import parse_cli_name as _parse_cli_name
+from .cli_support import read_pi_log_cwd as _read_pi_log_cwd
+from .cli_support import read_pi_session_id as _read_pi_session_id
 from . import rollout_log as _rollout_log
 from .util import default_app_dir as _default_app_dir
 from .util import classify_session_log as _classify_session_log
@@ -1336,6 +1340,111 @@ def _compute_idle_from_log(path: Path, max_scan_bytes: int = 8 * 1024 * 1024) ->
     return _rollout_log._compute_idle_from_log(path, max_scan_bytes=max_scan_bytes)
 
 
+def _parse_pi_timestamp(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts > 1000000000000:
+            ts /= 1000.0
+        return ts
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    try:
+        return float(raw)
+    except Exception:
+        pass
+    try:
+        return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def _read_pi_session_header(session_file: Path) -> dict[str, Any] | None:
+    try:
+        with session_file.open("r", encoding="utf-8") as f:
+            first = f.readline().strip()
+    except Exception:
+        return None
+    if not first:
+        return None
+    try:
+        obj = json.loads(first)
+    except Exception:
+        return None
+    if not isinstance(obj, dict) or obj.get("type") != "session":
+        return None
+    return obj
+
+
+def _proc_pid_cmdline(proc_root: Path, pid: int) -> str:
+    p = proc_root / str(pid) / "cmdline"
+    try:
+        raw = p.read_bytes()
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        return ""
+    if not raw:
+        return ""
+    return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
+
+
+def _discover_alive_pi_session_files(proc_root: Path, sessions_dir: Path) -> dict[Path, int]:
+    out: dict[Path, int] = {}
+    if (not proc_root.exists()) or (not sessions_dir.exists()):
+        return out
+    uid = int(os.getuid())
+    try:
+        base = sessions_dir.resolve()
+    except Exception:
+        base = sessions_dir
+    try:
+        entries = list(proc_root.iterdir())
+    except Exception:
+        return out
+    for proc_dir in entries:
+        if not proc_dir.name.isdigit():
+            continue
+        pid = int(proc_dir.name)
+        try:
+            puid = int(proc_dir.stat().st_uid)
+        except Exception:
+            puid = None
+        if (puid is not None) and (puid != uid):
+            continue
+        cmdline = _proc_pid_cmdline(proc_root, pid).lower()
+        if not cmdline:
+            continue
+        padded = f" {cmdline} "
+        if not (" pi " in padded or "/pi " in padded or padded.endswith(" /pi ")):
+            continue
+        fd_dir = proc_dir / "fd"
+        try:
+            fd_entries = list(fd_dir.iterdir())
+        except Exception:
+            continue
+        for ent in fd_entries:
+            try:
+                tgt = os.readlink(ent)
+            except OSError:
+                continue
+            if tgt.endswith(" (deleted)") or (not tgt.startswith("/")):
+                continue
+            p = Path(tgt)
+            if p.suffix != ".jsonl":
+                continue
+            try:
+                resolved = p.resolve()
+            except Exception:
+                resolved = p
+            try:
+                resolved.relative_to(base)
+            except Exception:
+                continue
+            out.setdefault(resolved, pid)
+    return out
+
+
 def _last_chat_role_ts_from_tail(
     path: Path,
     *,
@@ -1626,9 +1735,11 @@ class Session:
     cwd: str
     log_path: Path | None
     sock_path: Path
+    backend: str = "pty"
     session_file: str | None = None
     resume_hint: str | None = None
     tmux_name: str | None = None
+    live: bool = True
     busy: bool = False
     queue_len: int = 0
     token: dict[str, Any] | None = None
@@ -2164,6 +2275,7 @@ class SessionManager:
             if (now - last) < DISCOVER_MIN_INTERVAL_SECONDS:
                 return
         SOCK_DIR.mkdir(parents=True, exist_ok=True)
+        live_pi_session_files: set[str] = set()
         for sock in sorted(SOCK_DIR.glob("*.sock")):
             session_id = sock.stem
             # Prefer metadata file written by sessiond.
@@ -2217,6 +2329,7 @@ class SessionManager:
                     session_file = str(log_path)
                 if resume_hint is None:
                     resume_hint = f"pi --session {log_path}"
+                live_pi_session_files.add(str(log_path))
 
             if (log_path is None) and (not _pid_alive(codex_pid)) and (not _pid_alive(broker_pid)):
                 _unlink_quiet(sock)
@@ -2309,7 +2422,63 @@ class SessionManager:
                         self._reset_log_caches(prev, meta_log_off=meta_log_off)
                     if s.last_assistant_ts is not None:
                         prev.last_assistant_ts = s.last_assistant_ts
+        pi_sessions_dir = _cli_logs_dir("pi")
+        alive_pi_sessions = _discover_alive_pi_session_files(Path("/proc"), pi_sessions_dir)
+        active_native_pi_ids: set[str] = set()
+        for session_file, pi_pid in sorted(alive_pi_sessions.items(), key=lambda item: str(item[0])):
+            session_file_str = str(session_file)
+            if session_file_str in live_pi_session_files:
+                continue
+            session_id = _read_pi_session_id(session_file)
+            if not isinstance(session_id, str) or not session_id:
+                continue
+            active_native_pi_ids.add(session_id)
+            header = _read_pi_session_header(session_file) or {}
+            cwd = _read_pi_log_cwd(session_file) or str(session_file.parent)
+            start_ts = _parse_pi_timestamp(header.get("timestamp"))
+            if start_ts is None:
+                try:
+                    start_ts = float(session_file.stat().st_mtime)
+                except Exception:
+                    start_ts = time.time()
+            last_role_ts = _last_chat_role_ts_from_tail(session_file, max_scan_bytes=CHAT_INIT_MAX_SCAN_BYTES)
+            last_assistant_ts = _last_assistant_ts_from_tail(session_file, max_scan_bytes=CHAT_INIT_MAX_SCAN_BYTES)
+            busy = bool(last_role_ts is not None and last_role_ts[0] == "user")
+            meta_log_off = int(session_file.stat().st_size)
+            s = Session(
+                session_id=session_id,
+                thread_id=session_id,
+                broker_pid=0,
+                codex_pid=int(pi_pid),
+                cli="pi",
+                owned=False,
+                start_ts=float(start_ts),
+                cwd=str(cwd),
+                log_path=session_file,
+                sock_path=session_file,
+                backend="native",
+                session_file=session_file_str,
+                resume_hint=f"pi --session {session_file_str}",
+                live=False,
+                busy=busy,
+                queue_len=0,
+                token=None,
+                last_chat_ts=(last_role_ts[1] if last_role_ts is not None else None),
+                last_assistant_ts=last_assistant_ts,
+                meta_thinking=0,
+                meta_tools=0,
+                meta_system=0,
+                meta_log_off=meta_log_off,
+            )
+            with self._lock:
+                prev = self._sessions.get(session_id)
+                if prev is None or (prev.cli == "pi" and getattr(prev, "backend", "pty") == "native"):
+                    self._reset_log_caches(s, meta_log_off=meta_log_off)
+                    self._sessions[session_id] = s
         with self._lock:
+            for sid, sess in list(self._sessions.items()):
+                if sess.cli == "pi" and getattr(sess, "backend", "pty") == "native" and sid not in active_native_pi_ids:
+                    self._sessions.pop(sid, None)
             self._last_discover_ts = time.time()
 
     def _refresh_session_state(self, session_id: str, sock_path: Path, timeout_s: float = 0.4) -> tuple[bool, BaseException | None]:
@@ -2335,6 +2504,10 @@ class SessionManager:
             items = list(self._sessions.items())
         dead: list[tuple[str, Path]] = []
         for sid, s in items:
+            if getattr(s, "backend", "pty") == "native":
+                if (s.log_path is None) or (not s.log_path.exists()) or (not _pid_alive(s.codex_pid)):
+                    dead.append((sid, s.sock_path))
+                continue
             if not s.sock_path.exists():
                 dead.append((sid, s.sock_path))
                 continue
@@ -3037,6 +3210,12 @@ class SessionManager:
         return {"queue": q, "queue_len": int(qlen)}
 
     def queue_get(self, session_id: str) -> dict[str, Any]:
+        with self._lock:
+            s = self._sessions.get(session_id)
+            if not s:
+                raise KeyError("unknown session")
+            if getattr(s, "backend", "pty") == "native":
+                return {"queue": [], "queue_len": 0}
         return self._queue_call(session_id, {"cmd": "queue", "op": "get"})
 
     def queue_set(self, session_id: str, queue: list[str]) -> dict[str, Any]:
@@ -3063,7 +3242,16 @@ class SessionManager:
             s = self._sessions.get(session_id)
             if not s:
                 raise KeyError("unknown session")
+            backend = getattr(s, "backend", "pty")
+            busy_fallback = bool(s.busy)
             sock = s.sock_path
+        if backend == "native":
+            busy = False
+            try:
+                busy = not self.idle_from_log(session_id)
+            except Exception:
+                busy = busy_fallback
+            return {"busy": busy, "queue_len": 0, "token": None}
         try:
             resp = self._sock_call(sock, {"cmd": "state"}, timeout_s=1.5)
         except Exception:
@@ -3092,6 +3280,8 @@ class SessionManager:
             s = self._sessions.get(session_id)
             if not s:
                 raise KeyError("unknown session")
+            if getattr(s, "backend", "pty") == "native":
+                return ""
             sock = s.sock_path
             cli = _normalize_cli_name(getattr(s, "cli", ""), default="codex")
         try:
